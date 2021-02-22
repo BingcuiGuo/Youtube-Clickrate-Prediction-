@@ -1,0 +1,271 @@
+---
+title: "final_code"
+author: "Violet Guo"
+date: "12/6/2020"
+output: html_document
+---
+
+
+```{r}
+##read in data 
+data <- read.csv("training.csv")
+```
+
+```{r}
+library(lubridate)
+library(caret)
+```
+
+```{r}
+dim(data)
+```
+
+```{r}
+## data transformation
+years1 <- c()
+months1 <- c()
+days1 <- c()
+hours1 <- c()
+minutes1 <- c()
+weekday1<- c()
+for (i in 1:7242){
+  mydate <- strptime(data[,"PublishedDate"][i] , format = "%m/%d/%Y%H:%M")
+  years1 <- c(years1, year(mydate))
+  months1 <- c(months1, month(mydate))
+  days1 <- c(days1, day(mydate))
+  hours1 <- c(hours1, hour(mydate))
+  minutes1 <- c(minutes1, minute(mydate))
+  weekday1 <- c(weekday1, weekdays(mydate))
+}
+```
+
+
+```{r}
+##remove id and publsihed date 
+data$myduration <- 60*hours1 + minutes1
+data <- data[, -c(1,2)]
+```
+
+```{r}
+data$years  <- years1
+data$months <- months1
+data$dates <- days1
+data$weekdays <- weekday1
+data$weekdays <- as.factor(data$weekdays)
+```
+
+
+```{r}
+## train_test split 
+size <- dim(data)[1]
+train_idx <- sample(1:size, floor(size*0.7))
+train <- data[train_idx,]
+test <- data[-train_idx,]
+```
+
+```{r}
+lasso.mod <- glmnet(train.mat, train$growth_2_6, family = "gaussian", alpha = 1, lambda=grid, 
+                     standardize = TRUE)
+```
+
+
+```{r}
+cv.lasso <- cv.glmnet(train.mat, train$growth_2_6, alpha=1, lambda=grid, standardize=TRUE, nfolds=10)
+```
+
+```{r}
+cv.lasso$lambda.min
+```
+
+```{r}
+## see important coefficients
+ d <- predict(lasso.mod, s=cv.lasso$lambda.min, type="coefficients")
+```
+
+```{r}
+##see important features
+sig <- dimnames(d)[[1]][which(d!=0)]
+sig1 <- sig[-1]
+sig
+```
+```{r}
+## look at lasso prediction error by using linear regression 
+## and we know that the number of predictors that lasso selects out are too much 
+## and the lasso prediction is so abd
+predict(lasso.mod, s = cv.lasso$lambda.min, type="coefficients")
+testx <- model.matrix(growth_2_6~.,test)
+testy <- test$growth_2_6
+lasso.pred = predict(lasso.mod, newx= testx, s=cv.lasso$lambda.1se)
+lasso.err = mean((testy - lasso.pred)^2)
+```
+
+```{r}
+lasso.err
+```
+
+```{r}
+##remove highly correlated predictors
+# Splitting numeric and categorical variables
+
+numeric_idx <-c(3:247, 261:263)
+categorical_idx <- c(248:259)
+total_colnames <- colnames(data)
+
+set.seed(1)
+library(mlbench)
+library(caret)
+library(vecsets)
+# calculate correlation matrix
+correlationMatrix <- cor(train[,numeric_idx],use="complete.obs")
+
+#remove columns with std=0
+predictors <- names(which(is.na(correlationMatrix[1,])))
+predictors # all numeric
+idx <- match(predictors,total_colnames)
+numeric_idx2 <- numeric_idx[!numeric_idx %in% idx]
+numeric_idx2
+
+
+#correlationMatrix
+correlationMatrix <- cor(train[,numeric_idx2],use="complete.obs")
+
+# find attributes that are highly corrected 
+highlyCorrelated <- findCorrelation(correlationMatrix, cutoff=0.65)
+numeric_highly_cor <- vsetdiff(numeric_idx2, highlyCorrelated)
+length(numeric_highly_cor)
+numeric_highly_cor
+
+##name of all the highly correlated data 
+total_colnames[numeric_highly_cor]
+```
+
+
+```{r}
+##select the predictors after removing all the highly correlated data 
+data <- data[, -c(total_colnames[numeric_idxe])]
+```
+
+```{r}
+## do train_test split again by using the new data
+size <- dim(data)[1]
+train_idx <- sample(1:size, floor(size*0.7))
+train <- data[train_idx,]
+test <- data[-train_idx,]
+```
+
+
+```{r}
+##feature selecton 
+bagging_model <- randomForest(growth_2_6~., data=train, mtry=ncol(train)-1, n.trees=1000, importance=T)
+```
+
+```{r}
+## look at importance features 
+imp_rk <- sort(importance(bagging_model)[, 1],decreasing=TRUE)
+```
+
+```{r}
+##look at the most importance features 
+varImpPlot(bagging_model, pch=19, cex=0.6)
+```
+
+```{r}
+## generate variable importance histagram plot to see the distribution 
+## of the importance score and the frequency the varaibles with that score appear
+var_index <- importance(rf_all)[,1]
+hist(var_index,density = FALSE,main = "feature importance plot",xlab = "feature importance value", xlim = c(-50,150),breaks = 20)
+```
+
+```{r}
+library(randomForest)
+```
+
+
+```{r}
+trial_model <- randomForest(growth_2_6~avg_growth_low_mid+cnn_10+Num_Views_Base_mid_high+avg_growth_low+cnn_86+cnn_89+cnn_12+cnn_17+Num_Subscribers_Base_mid_high+Num_Subscribers_Base_low_mid+views_2_hours+cnn_25+myduration+count_vids_low_mid+avg_growth_mid_high+cnn_88+cnn_68+count_vids_mid_high+punc_num_..28+num_uppercase_chars+Duration+num_words+cnn_19+num_digit_chars+punc_num_..21+num_chars+punc_num_..1+months+mean_green+hog_342, data=train, ntree=2000, mtry=30, maxdepth=10)
+```
+
+
+```{r}
+
+RMSE <- function(y1,y2){
+  rmse <- sqrt(mean((y1-y2)^2))
+  return(rmse)
+}
+```
+
+```{r}
+pred_test <- predict(trial_model, test)
+```
+
+```{r}
+##cross validation to see the result 
+RMSE(test$growth_2_6, pred_test2)
+```
+
+
+```{r}
+##grid search final parameter
+fitControl <- trainControl(## 10-fold CV
+                           method = "repeatedcv",
+                           number = 10,
+                           ## repeated ten times
+                           repeats = 10)
+
+```
+
+```{r}
+gbmGrid <- expand.grid(interaction.depth=c(8,10,14), n.trees = c(1800, 2000, 2500), 
+                       shrinkage=0.1, n.minobsinnode=20)
+nrow(gbmGrid)
+```
+
+```{r}
+##tune hyper parameter
+gbmFit2<- train(growth_2_6~avg_growth_low_mid+cnn_10+Num_Views_Base_mid_high+avg_growth_low+cnn_86+cnn_89+cnn_12+cnn_17+Num_Subscribers_Base_mid_high+Num_Subscribers_Base_low_mid+views_2_hours+cnn_25+myduration+count_vids_low_mid+avg_growth_mid_high+cnn_88+cnn_68+count_vids_mid_high+punc_num_..28+num_uppercase_chars+Duration+num_words+cnn_19+num_digit_chars+punc_num_..21+num_chars+punc_num_..1+months+mean_green+hog_342, data=train, method = "gbm", trControl = fitControl, verbose=FALSE, tuneGrid=gbmGrid)
+```
+
+
+
+```{r}
+test_id <- read.csv("test.csv")
+```
+
+```{r}
+## read in test data 
+test_data <- read.csv("test.csv")
+```
+```{r}
+years3 <- c()
+months3 <- c()
+days3 <- c()
+hours3 <- c()
+minutes3 <- c()
+weekday3<- c()
+for (i in 1:3105){
+  mydate <- strptime(test_data[,"PublishedDate"][i] , format = "%m/%d/%Y%H:%M")
+  years3 <- c(years3, year(mydate))
+  months3 <- c(months3, month(mydate))
+  days3 <- c(days3, day(mydate))
+  hours3 <- c(hours3, hour(mydate))
+  minutes3 <- c(minutes3, minute(mydate))
+  weekday3 <- c(weekday3, weekdays(mydate))
+}
+```
+
+```{r}
+test_data$years  <- years3
+test_data$months <- months3
+test_data$dates <- days3
+test_data$weekdays <- weekday3
+test_data$myduration <- hours3 * 60 + minutes3
+```
+
+```{r}
+df1<-data.frame(test_id[,1],pred_labal2)
+colnames(df1) <- c("id", "growth_2_6")
+
+write.csv(df1,"submission_bagging_final2.csv", row.names = FALSE)
+```
+
+
